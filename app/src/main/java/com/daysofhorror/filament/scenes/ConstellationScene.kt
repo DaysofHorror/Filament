@@ -7,6 +7,7 @@ import android.graphics.RadialGradient
 import android.graphics.Shader
 import com.daysofhorror.filament.Glow
 import com.daysofhorror.filament.Scene
+import com.daysofhorror.filament.Spring
 import com.daysofhorror.filament.clamp01
 import com.daysofhorror.filament.col
 import com.daysofhorror.filament.hashF
@@ -17,7 +18,7 @@ import kotlin.math.sqrt
 import kotlin.random.Random
 
 /** Each 1% lights a new star and threads it into a growing constellation. */
-class ConstellationScene : Scene {
+class ConstellationScene : Scene() {
     private val n = 100
     private val sx = FloatArray(n)
     private val sy = FloatArray(n)
@@ -25,6 +26,9 @@ class ConstellationScene : Scene {
     private val edgeB = ArrayList<Int>()
     private val appear = FloatArray(n) { -1f }
     private var started = false
+    private val par = Spring(14f, 6f)
+    private class Temp(val x: Float, val y: Float, var age: Float, val a: Int, val b: Int)
+    private val temps = ArrayList<Temp>()
 
     private var lw = -1f
     private var lh = -1f
@@ -121,10 +125,11 @@ class ConstellationScene : Scene {
         if (w != lw || h != lh) setup(w, h)
         val u = w / 400f
         c.drawRect(0f, 0f, w, h, bg)
-        for (i in 0 until 3) c.drawCircle(nebPos[i * 3], nebPos[i * 3 + 1], nebPos[i * 3 + 2], neb[i])
+        val pv = par.step(env.tiltX.coerceIn(-1f, 1f), dt)
+        for (i in 0 until 3) c.drawCircle(nebPos[i * 3] + pv * 2f * u, nebPos[i * 3 + 1], nebPos[i * 3 + 2], neb[i])
         for (i in 0 until 180) {
             dustP.alpha = ((0.25f + 0.35f * (0.5f + 0.5f * sin(t * (0.7f + hashF(i + 3)) + i))) * 255).toInt()
-            c.drawCircle(dust[i * 3], dust[i * 3 + 1], dust[i * 3 + 2] * u, dustP)
+            c.drawCircle(dust[i * 3] + pv * 4f * u, dust[i * 3 + 1], dust[i * 3 + 2] * u, dustP)
         }
 
         val count = floor(level * n + 0.0001f).toInt().coerceIn(0, n)
@@ -134,6 +139,26 @@ class ConstellationScene : Scene {
             } else appear[i] = -1f
         }
         started = true
+
+        // Parallax: the constellation layer moves most when you tilt
+        val ofs = pv * 10f * u
+        c.save()
+        c.translate(ofs, 0f)
+
+        // Taps light a new star, which links itself to its two nearest neighbours
+        for (tap in env.taps) {
+            val x = tap[0] - ofs
+            val y = tap[1]
+            var a = -1; var b = -1; var da = Float.MAX_VALUE; var db = Float.MAX_VALUE
+            for (i in 0 until count) {
+                val dx = sx[i] * w - x
+                val dy = sy[i] * h - y
+                val d = dx * dx + dy * dy
+                if (d < da) { db = da; b = a; da = d; a = i } else if (d < db) { db = d; b = i }
+            }
+            temps.add(Temp(x, y, 0f, a, b))
+            if (temps.size > 12) temps.removeAt(0)
+        }
 
         linkP.strokeWidth = 1.1f * u
         for (e in edgeA.indices) {
@@ -173,6 +198,29 @@ class ConstellationScene : Scene {
             val py = lerp(sy[i0], sy[i0 + 1], fr) * h
             Glow.draw(c, col(0xFF7FE8FF), px, py, 15f * u, 0.85f)
         }
+
+        val tit = temps.iterator()
+        while (tit.hasNext()) {
+            val s = tit.next()
+            s.age += dt
+            if (s.age > 6f) { tit.remove(); continue }
+            val life = clamp01((6f - s.age) / 2f)
+            val grow = clamp01(s.age / 0.7f)
+            linkP.alpha = (120 * life).toInt()
+            for (k in intArrayOf(s.a, s.b)) {
+                if (k < 0) continue
+                c.drawLine(s.x, s.y, lerp(s.x, sx[k] * w, grow), lerp(s.y, sy[k] * h, grow), linkP)
+            }
+            val f = clamp01(1f - s.age / 1.5f)
+            Glow.draw(c, col(0xFFFFE9B0), s.x, s.y, 14f * u, life)
+            Glow.draw(c, col(0xFFFFFFFF), s.x, s.y, 56f * u * f, f)
+            flareP.strokeWidth = 1.2f * u
+            flareP.alpha = (f * 230).toInt()
+            c.drawLine(s.x - 38f * u * f, s.y, s.x + 38f * u * f, s.y, flareP)
+            c.drawLine(s.x, s.y - 38f * u * f, s.x, s.y + 38f * u * f, flareP)
+            c.drawCircle(s.x, s.y, 2.2f * u, coreP)
+        }
+        c.restore()
 
         // Occasional shooting star
         val cycle = floor(t / 6.5f).toInt()

@@ -9,18 +9,22 @@ import android.graphics.PorterDuffXfermode
 import android.graphics.Shader
 import com.daysofhorror.filament.Glow
 import com.daysofhorror.filament.Scene
+import com.daysofhorror.filament.Spring
 import com.daysofhorror.filament.TAU
 import com.daysofhorror.filament.clamp01
 import com.daysofhorror.filament.col
 import com.daysofhorror.filament.hashF
 import com.daysofhorror.filament.lerp
 import com.daysofhorror.filament.withAlpha
+import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.sqrt
 import kotlin.math.sin
 import kotlin.random.Random
 
 /** Water fills the screen to the charge level, with rolling waves, light rays and bubbles. */
-class TideScene : Scene {
+class TideScene : Scene() {
     private var lw = -1f
     private var lh = -1f
     private val bg = Paint()
@@ -43,6 +47,9 @@ class TideScene : Scene {
 
     private class Bubble(var x: Float, var y: Float, var r: Float, var speed: Float, var phase: Float)
     private val bubbles = ArrayList<Bubble>()
+    private val slosh = Spring(16f, 1.8f)
+    private val ripples = ArrayList<FloatArray>() // x, y, age
+    private val pops = ArrayList<FloatArray>()    // x, y, age
 
     private fun setup(w: Float, h: Float) {
         lw = w; lh = h
@@ -90,13 +97,18 @@ class TideScene : Scene {
 
         val s = lerp(h * 0.985f, h * 0.035f, level)
         val step = 6f * u
+        // Tilt: water piles up on the low side and sloshes back and forth
+        val tilt = slosh.step(env.tiltX.coerceIn(-0.8f, 0.8f) * 0.3f, dt)
+        val chop = min(1f, abs(slosh.v) * 3f)
+        val amp = (12f + 10f * chop) * u
+        fun surfAt(x: Float) = wave(x, s, amp, w, t, 1f) - tilt * (x - w / 2f)
 
         // Back wave
         body.rewind()
         body.moveTo(0f, h)
         var x = 0f
         while (x <= w + step) {
-            body.lineTo(x, wave(x, s - 10f * u, 9f * u, w, t + 3f, -1f))
+            body.lineTo(x, wave(x, s - 10f * u, 9f * u, w, t + 3f, -1f) - tilt * 0.9f * (x - w / 2f))
             x += step
         }
         body.lineTo(w + step, h)
@@ -109,7 +121,7 @@ class TideScene : Scene {
         x = 0f
         var first = true
         while (x <= w + step) {
-            val y = wave(x, s, 12f * u, w, t, 1f)
+            val y = surfAt(x)
             body.lineTo(x, y)
             if (first) { surface.moveTo(x, y); first = false } else surface.lineTo(x, y)
             x += step
@@ -138,12 +150,25 @@ class TideScene : Scene {
         crest.strokeWidth = 2.2f * u
         c.drawPath(surface, crest)
 
+        // Taps: a ripple, and nearby bubbles pop
+        for (tap in env.taps) {
+            ripples.add(floatArrayOf(tap[0], tap[1], 0f))
+            for (b in bubbles) {
+                val dx = b.x - tap[0]
+                val dy = b.y - tap[1]
+                if (sqrt(dx * dx + dy * dy) < 80f * u && b.y > surfAt(b.x)) {
+                    pops.add(floatArrayOf(b.x, b.y, 0f))
+                    respawn(b, w, h)
+                }
+            }
+        }
+
         // Bubbles rise and pop at the surface
         ring.strokeWidth = max(1f, 1.2f * u)
         for (b in bubbles) {
             b.y -= b.speed * dt
             val bx = b.x + sin(t * 2.2f + b.phase) * 5f * u
-            val surfY = wave(bx, s, 12f * u, w, t, 1f)
+            val surfY = surfAt(bx)
             if (b.y < surfY + b.r) {
                 if (dt > 0f) respawn(b, w, h)
                 continue
@@ -159,9 +184,29 @@ class TideScene : Scene {
         // Glints riding the surface
         for (i in 0 until 10) {
             val gx = (hashF(i) * w + t * (8f + hashF(i + 50) * 14f) * u) % w
-            val gy = wave(gx, s, 12f * u, w, t, 1f)
+            val gy = surfAt(gx)
             val a = 0.5f + 0.5f * sin(t * 3f + i * 1.7f)
             Glow.draw(c, col(0xFFDFFFFA), gx, gy, 10f * u, a * 0.8f)
+        }
+
+        // Ripples and pops from taps
+        val rit = ripples.iterator()
+        while (rit.hasNext()) {
+            val r = rit.next()
+            r[2] += dt
+            if (r[2] > 1.3f) { rit.remove(); continue }
+            val a = 1f - r[2] / 1.3f
+            ring.strokeWidth = 2.5f * u * a + 0.5f
+            ring.color = withAlpha(col(0xFFE6FFFF), (200 * a).toInt())
+            c.drawCircle(r[0], r[1], 12f * u + r[2] * 150f * u, ring)
+            c.drawCircle(r[0], r[1], 4f * u + r[2] * 90f * u, ring)
+        }
+        val pit = pops.iterator()
+        while (pit.hasNext()) {
+            val p = pit.next()
+            p[2] += dt
+            if (p[2] > 0.35f) { pit.remove(); continue }
+            Glow.draw(c, col(0xFFFFFFFF), p[0], p[1], 6f * u + p[2] * 60f * u, 1f - p[2] / 0.35f)
         }
     }
 }

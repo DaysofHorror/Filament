@@ -85,6 +85,12 @@ class MainActivity : Activity() {
         }
         shuffleSwitch = surprise.findViewWithTag("switch")
         card.addView(surprise)
+        card.addView(divider())
+        card.addView(switchRow("Haptics", "A tiny tick for every 1%, and a thunk at 100%", Prefs.haptics(this)) { on ->
+            Prefs.setHaptics(this, on)
+        })
+        card.addView(divider())
+        card.addView(timeoutRow())
         column.addView(card)
 
         // Picker grid
@@ -313,6 +319,40 @@ class MainActivity : Activity() {
         }
         row.addView(sw)
         row.setOnClickListener { sw.toggle() }
+        return row
+    }
+
+    private val timeoutOptions = intArrayOf(5, 10, 20, 0)
+
+    private fun timeoutLabel(m: Int) = if (m == 0) "Whole charge" else "$m min"
+
+    /** Tap the chip to cycle 5 / 10 / 20 min / whole charge. Protects the screen from burn-in. */
+    private fun timeoutRow(): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(12), 0, dp(12))
+        }
+        val texts = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(text("Keep screen on for", 16f, col(0xFFFFFFFF), "sans-serif"))
+            addView(text("Then it sleeps while charging carries on. Kinder to the screen.", 12f, col(0x8CFFFFFF), "sans-serif"))
+        }
+        row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(12) })
+        val chip = text(timeoutLabel(Prefs.screenMinutes(this)), 13f, col(0xFF1A1206), "sans-serif-medium").apply {
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            background = GradientDrawable().apply {
+                cornerRadius = dpf(18f)
+                setColor(amber)
+            }
+        }
+        chip.setOnClickListener {
+            val cur = timeoutOptions.indexOf(Prefs.screenMinutes(this))
+            val next = timeoutOptions[(cur + 1) % timeoutOptions.size]
+            Prefs.setScreenMinutes(this, next)
+            chip.text = timeoutLabel(next)
+        }
+        row.addView(chip)
         return row
     }
 

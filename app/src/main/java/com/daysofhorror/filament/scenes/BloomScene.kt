@@ -8,6 +8,7 @@ import android.graphics.Shader
 import com.daysofhorror.filament.Glow
 import com.daysofhorror.filament.PIf
 import com.daysofhorror.filament.Scene
+import com.daysofhorror.filament.Spring
 import com.daysofhorror.filament.clamp01
 import com.daysofhorror.filament.col
 import com.daysofhorror.filament.hashF
@@ -19,7 +20,7 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /** A tree grows with the charge, then blossoms and sheds petals as it nears full. */
-class BloomScene : Scene {
+class BloomScene : Scene() {
     private val maxDepth = 9
     private val tipX = FloatArray(2 shl maxDepth)
     private val tipY = FloatArray(2 shl maxDepth)
@@ -40,13 +41,16 @@ class BloomScene : Scene {
     private var u = 1f
     private var tt = 0f
 
-    private val maxPetals = 80
+    private val maxPetals = 140
     private val px = FloatArray(maxPetals)
     private val py = FloatArray(maxPetals)
     private val pr = FloatArray(maxPetals)
     private val pv = FloatArray(maxPetals)
     private val pl = FloatArray(maxPetals)
     private val alive = BooleanArray(maxPetals)
+    private val pc = IntArray(maxPetals)
+    private val lean = Spring(9f, 1.6f)
+    private var leanVal = 0f
     private var spawnAcc = 0f
     private val rnd = Random(4)
 
@@ -72,6 +76,7 @@ class BloomScene : Scene {
         c.drawRect(0f, 0f, w, h, sky)
         Glow.draw(c, col(0xFFFFB27A), w * 0.5f, h * 0.88f, w * 0.55f, 0.45f)
 
+        leanVal = lean.step(env.tiltX.coerceIn(-1f, 1f) * 0.25f, dt)
         val growth = 0.08f + 0.92f * clamp01(level / 0.85f)
         val maxD = 1f + (maxDepth - 1) * growth
         tipCount = 0
@@ -95,29 +100,30 @@ class BloomScene : Scene {
             }
         }
 
+        // Taps shake the tree and knock petals (or leaves) loose
+        for (tap in env.taps) {
+            lean.v += if (tap[0] < w / 2f) -1.4f else 1.4f
+            if (tipCount > 0) {
+                repeat(18) { spawnPetal(rnd.nextInt(tipCount), if (bloom > 0.15f) col(0xFFFFC2DA) else col(0xFF8DB35E)) }
+            }
+        }
+
         // Falling petals
         if (dt > 0f && bloom > 0.3f && tipCount > 0) {
             spawnAcc += dt * 6f * bloom
             while (spawnAcc >= 1f) {
                 spawnAcc -= 1f
-                val slot = alive.indexOfFirst { !it }
-                if (slot < 0) break
-                val k = rnd.nextInt(tipCount)
-                px[slot] = tipX[k]; py[slot] = tipY[k]
-                pr[slot] = rnd.nextFloat() * 360f
-                pv[slot] = (rnd.nextFloat() - 0.5f) * 200f
-                pl[slot] = 0f
-                alive[slot] = true
+                spawnPetal(rnd.nextInt(tipCount), col(0xFFFFC2DA))
             }
         }
-        petal.color = col(0xFFFFC2DA)
         for (i in 0 until maxPetals) {
             if (!alive[i]) continue
             pl[i] += dt
             py[i] += (20f + 10f * sin(pl[i] * 2f + i)) * u * dt
-            px[i] += (sin(t * 0.8f + i) * 14f + 9f) * u * dt
+            px[i] += (sin(t * 0.8f + i) * 14f + 9f + env.tiltX * 45f) * u * dt
             pr[i] += pv[i] * dt
             if (py[i] > h * 0.9f || pl[i] > 14f) { alive[i] = false; continue }
+            petal.color = pc[i]
             petal.alpha = (min(1f, (14f - pl[i]) / 2f) * 230).toInt()
             c.save()
             c.translate(px[i], py[i])
@@ -125,6 +131,17 @@ class BloomScene : Scene {
             c.drawOval(-3.2f * u, -1.7f * u, 3.2f * u, 1.7f * u, petal)
             c.restore()
         }
+    }
+
+    private fun spawnPetal(k: Int, color: Int) {
+        val slot = alive.indexOfFirst { !it }
+        if (slot < 0) return
+        px[slot] = tipX[k]; py[slot] = tipY[k]
+        pr[slot] = rnd.nextFloat() * 360f
+        pv[slot] = (rnd.nextFloat() - 0.5f) * 200f
+        pl[slot] = 0f
+        pc[slot] = color
+        alive[slot] = true
     }
 
     private fun addTip(x: Float, y: Float, id: Int) {
@@ -138,7 +155,7 @@ class BloomScene : Scene {
         if (depth >= maxD) return
         val frac = min(1f, maxD - depth)
         val sway = sin(tt * 1.3f + depth * 0.7f + hashF(id) * 6f) * 0.018f * depth + sin(tt * 0.5f) * 0.01f * depth
-        val a = ang + sway
+        val a = ang + sway + leanVal * (depth + 1) * 0.06f
         val l = len * frac
         val x2 = x + cos(a) * l
         val y2 = y + sin(a) * l

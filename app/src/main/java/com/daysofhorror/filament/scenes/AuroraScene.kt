@@ -9,13 +9,15 @@ import android.graphics.PorterDuffXfermode
 import android.graphics.Shader
 import com.daysofhorror.filament.Glow
 import com.daysofhorror.filament.Scene
+import com.daysofhorror.filament.Spring
 import com.daysofhorror.filament.col
 import com.daysofhorror.filament.hashF
+import kotlin.math.exp
 import kotlin.math.sin
 import kotlin.random.Random
 
 /** Northern lights over Highland hills and a little bothy. They grow taller as you charge. */
-class AuroraScene : Scene {
+class AuroraScene : Scene() {
     private var lw = -1f
     private var lh = -1f
     private val sky = Paint()
@@ -34,6 +36,9 @@ class AuroraScene : Scene {
     private var winX = 0f
     private var winY = 0f
     private var winS = 0f
+    private val lean = Spring(9f, 2.2f)
+    private val par = Spring(14f, 6f)
+    private val flares = ArrayList<FloatArray>() // x, age
 
     private fun nearY(x: Float, w: Float, h: Float): Float {
         val nx = x / w
@@ -103,13 +108,19 @@ class AuroraScene : Scene {
         val u = w / 400f
         c.drawRect(0f, 0f, w, h, sky)
 
+        val pv = par.step(env.tiltX.coerceIn(-1f, 1f), dt)
+        val sk = lean.step(env.tiltX.coerceIn(-1f, 1f) * 0.35f, dt)
+        for (tap in env.taps) flares.add(floatArrayOf(tap[0], 0f))
+        val fit = flares.iterator()
+        while (fit.hasNext()) { val f = fit.next(); f[1] += dt; if (f[1] > 3f) fit.remove() }
+
         for (i in 0 until 150) {
             val a = 0.35f + 0.65f * (0.5f + 0.5f * sin(t * (1f + hashF(i) * 2f) + i))
             star.alpha = (a * 220).toInt()
-            c.drawCircle(stars[i * 3], stars[i * 3 + 1], stars[i * 3 + 2] * u, star)
+            c.drawCircle(stars[i * 3] + pv * 5f * u, stars[i * 3 + 1], stars[i * 3 + 2] * u, star)
         }
 
-        val intensity = 0.25f + 0.75f * level
+        val intensity = (0.25f + 0.75f * level) * env.power
         val step = 5f * u
         for (i in 0 until 3) {
             line.shader = ribbons[i]
@@ -119,23 +130,34 @@ class AuroraScene : Scene {
                 val nx = x / w
                 val yb = baseY + h * (0.045f * sin(nx * 3f + t * 0.13f * (i + 1) + i * 1.7f) +
                     0.018f * sin(nx * 8f - t * 0.31f + i))
-                val ht = h * (0.05f + 0.32f * level) * (0.55f + 0.45f * sin(nx * 4.5f + t * 0.37f + i * 2.1f))
-                val a = intensity * (0.55f + 0.45f * sin(nx * 40f + t * 1.6f * (1f + i * 0.3f) + i * 3f))
+                // Taps send a bright surge through the curtains at that spot
+                var boost = 0f
+                for (f in flares) {
+                    val d = (x - f[0]) / (w * 0.13f)
+                    boost += exp(-d * d) * (1f - f[1] / 3f) * (0.6f + 0.4f * sin(f[1] * 9f))
+                }
+                val ht = h * (0.05f + 0.32f * level) * (0.55f + 0.45f * sin(nx * 4.5f + t * 0.37f + i * 2.1f)) * (1f + boost * 0.6f) * (0.3f + 0.7f * env.power)
+                val a = minOf(1f, intensity * (0.55f + 0.45f * sin(nx * 40f + t * 1.6f * (1f + i * 0.3f) + i * 3f)) * (1f + boost * 1.4f))
                 line.strokeWidth = step * 3.2f
                 line.alpha = (a * 55).toInt()
-                c.drawLine(x, yb, x, yb - ht, line)
+                c.drawLine(x, yb, x + sk * ht, yb - ht, line)
                 line.strokeWidth = step * 0.9f
                 line.alpha = (a * 190).toInt()
-                c.drawLine(x, yb, x, yb - ht, line)
+                c.drawLine(x, yb, x + sk * ht, yb - ht, line)
                 x += step
             }
         }
 
+        c.save()
+        c.translate(pv * 3f * u, 0f)
         c.drawPath(farPath, farP)
+        c.restore()
+        c.save()
+        c.translate(pv * 10f * u, 0f)
         c.drawPath(nearPath, nearP)
-
         val flicker = 0.85f + 0.15f * sin(t * 7f) * sin(t * 3.1f)
         Glow.draw(c, col(0xFFFFB347), winX, winY, 26f * u, 0.7f * flicker)
         c.drawRect(winX - winS, winY - winS, winX + winS, winY + winS, windowP)
+        c.restore()
     }
 }

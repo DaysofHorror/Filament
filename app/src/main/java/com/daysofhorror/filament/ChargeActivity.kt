@@ -5,12 +5,18 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
@@ -29,7 +35,18 @@ class ChargeActivity : Activity() {
     private var registered = false
     private var sawPlugged = false
     private var unplugCheckPosted = false
-    private var sleepPosted = false
+    private var lastShownPct = -1
+    private var lastFull = false
+    private var lastArm = 0L
+    private var sensors: SensorManager? = null
+    private val tiltListener = object : SensorEventListener {
+        override fun onSensorChanged(e: SensorEvent) {
+            // Gravity in screen space: +x = right side lower, +y = bottom lower
+            view.env.tiltX = (-e.values[0] / 9.81f).coerceIn(-1f, 1f)
+            view.env.tiltY = (e.values[1] / 9.81f).coerceIn(-1f, 1f)
+        }
+        override fun onAccuracyChanged(s: Sensor?, a: Int) {}
+    }
     private var lastPct = -1
     private val ticks = ArrayDeque<Pair<Long, Int>>()
     private var demoPct = 55
@@ -43,9 +60,32 @@ class ChargeActivity : Activity() {
         }
     }
 
-    // After a minute at full charge, let the screen go to sleep as normal.
+    // Lets the screen sleep normally (after the chosen time, or a minute after reaching full).
     private val allowSleep = Runnable {
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    private fun armScreen() {
+        lastArm = SystemClock.elapsedRealtime()
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        handler.removeCallbacks(allowSleep)
+        if (demo) return
+        val mins = Prefs.screenMinutes(this)
+        val delay = when {
+            view.full -> 60_000L
+            mins > 0 -> mins * 60_000L
+            else -> -1L
+        }
+        if (delay > 0) handler.postDelayed(allowSleep, delay)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun buzz(effect: Int) {
+        if (!Prefs.haptics(this)) return
+        try {
+            getSystemService(Vibrator::class.java)?.vibrate(VibrationEffect.createPredefined(effect))
+        } catch (_: Exception) {
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,19 +100,28 @@ class ChargeActivity : Activity() {
 
         val info = intent.getStringExtra(EXTRA_SCENE)?.let { Scenes.byId(it) } ?: Prefs.pickScene(this)
         view = ChargeView(this, info, overlay = true)
-        view.hint = "Double-tap to close"
+        view.hint = "Tilt or tap  ·  swipe up to close"
+        view.intro = true
+        view.onImpact = { buzz(VibrationEffect.EFFECT_HEAVY_CLICK) }
+        sensors = getSystemService(SensorManager::class.java)
         setContentView(view)
         hideBars()
 
         val gd = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent) = true
-            override fun onDoubleTap(e: MotionEvent): Boolean {
-                finish()
-                return true
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+                val start = e1 ?: return false
+                if (velocityY < -1500f && start.y - e2.y > view.height * 0.25f) {
+                    finish()
+                    return true
+                }
+                return false
             }
         })
         view.setOnTouchListener { v, e ->
             if (e.action == MotionEvent.ACTION_UP) v.performClick()
+            view.handleTouch(e)
+            if (SystemClock.elapsedRealtime() - lastArm > 5000) armScreen()
             gd.onTouchEvent(e)
         }
 
@@ -109,8 +158,21 @@ class ChargeActivity : Activity() {
         if (hasFocus) hideBars()
     }
 
+    override fun onResume() {
+        super.onResume()
+        val sm = sensors ?: return
+        val s = sm.getDefaultSensor(Sensor.TYPE_GRAVITY) ?: sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        if (s != null) sm.registerListener(tiltListener, s, SensorManager.SENSOR_DELAY_GAME)
+    }
+
+    override fun onPause() {
+        sensors?.unregisterListener(tiltListener)
+        super.onPause()
+    }
+
     override fun onStart() {
         super.onStart()
+        armScreen()
         if (!demo && !registered) {
             val f = IntentFilter().apply {
                 addAction(Intent.ACTION_BATTERY_CHANGED)
@@ -191,6 +253,11 @@ class ChargeActivity : Activity() {
     }
 
     private fun show(pct: Int, full: Boolean, paused: Boolean, status: String, detail: String) {
+        // Haptics: a tiny tick for every 1% gained, a thunk on reaching 100%
+        if (lastShownPct >= 0 && pct > lastShownPct) {
+            buzz(if (pct >= 100) VibrationEffect.EFFECT_HEAVY_CLICK else VibrationEffect.EFFECT_TICK)
+        }
+        lastShownPct = pct
         view.percent = pct
         view.level = pct / 100f
         when {
@@ -210,14 +277,9 @@ class ChargeActivity : Activity() {
                 view.full = false
             }
         }
-        if (demo) return
-        if (view.full && !sleepPosted) {
-            sleepPosted = true
-            handler.postDelayed(allowSleep, 60_000)
-        } else if (!view.full && sleepPosted) {
-            sleepPosted = false
-            handler.removeCallbacks(allowSleep)
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (view.full != lastFull) {
+            lastFull = view.full
+            armScreen()
         }
     }
 
@@ -231,7 +293,7 @@ class ChargeActivity : Activity() {
             }
         }
         show(demoPct, false, false, "PREVIEW", "Speeding up so you can see the finish")
-        handler.postDelayed(step, 1500)
+        handler.postDelayed(step, 2600)
     }
 
     companion object {

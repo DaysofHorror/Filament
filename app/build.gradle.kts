@@ -13,8 +13,8 @@ android {
         applicationId = "com.daysofhorror.filament"
         minSdk = 29
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
     }
 
     // A fixed key so every build installs over the last one.

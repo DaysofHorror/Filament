@@ -11,15 +11,17 @@ import android.graphics.Typeface
 import com.daysofhorror.filament.Glow
 import com.daysofhorror.filament.PIf
 import com.daysofhorror.filament.Scene
+import com.daysofhorror.filament.Spring
 import com.daysofhorror.filament.TAU
 import com.daysofhorror.filament.col
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.sin
 import kotlin.random.Random
 
 /** A Victorian brass charge gauge with properly meshing gears turning behind it. */
-class ClockworkScene : Scene {
+class ClockworkScene : Scene() {
 
     private class Gear(val cx: Float, val cy: Float, val n: Int, val r: Float, val phase: Float, val ratio: Float) {
         val path = Path()
@@ -30,6 +32,9 @@ class ClockworkScene : Scene {
     private var lw = -1f
     private var lh = -1f
     private var angle = 0f
+    private var boost = 0f
+    private val needleSpring = Spring(26f, 3.2f)
+    private val wob = Spring(40f, 3f)
 
     private val bg = Paint()
     private val gearFill = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -159,18 +164,30 @@ class ClockworkScene : Scene {
         val u = w / 400f
         c.drawRect(0f, 0f, w, h, bg)
 
-        angle += dt * (0.25f + 0.35f * level)
+        // Taps: kick the gears, jolt the needle, blow off steam
+        for (tap in env.taps) {
+            boost += 2.5f
+            needleSpring.v += 160f
+            for (k in 0 until 10) {
+                puffs.add(Puff(gx + (rnd.nextFloat() - 0.5f) * 10f * u, gy - gr * 1.46f, (rnd.nextFloat() - 0.5f) * 140f * u, rnd.nextFloat() * 0.4f))
+            }
+        }
+        boost *= exp(-1.5f * dt)
+        angle += dt * ((0.25f + 0.35f * level) * env.power + boost)
+        val wv = wob.step(env.tiltX.coerceIn(-1f, 1f), dt)
 
         gearEdge.strokeWidth = 1.3f * u
-        for (g in gears) {
-            val deg = (g.phase + g.ratio * angle) * 180f / PIf
+        for ((gi, g) in gears.withIndex()) {
+            val deg = (g.phase + g.ratio * angle) * 180f / PIf + wv * (if (gi % 2 == 0) 2.5f else -2.5f)
+            val jx = wv * 4f * u * ((gi % 3) - 1)
+            val jy = wv * 2f * u * (if (gi % 2 == 0) 1f else -1f)
             c.save()
-            c.translate(g.cx + 4f * u, g.cy + 6f * u)
+            c.translate(g.cx + jx + 4f * u, g.cy + jy + 6f * u)
             c.rotate(deg)
             c.drawPath(g.path, shadow)
             c.restore()
             c.save()
-            c.translate(g.cx, g.cy)
+            c.translate(g.cx + jx, g.cy + jy)
             c.rotate(deg)
             gearFill.shader = g.shader
             c.drawPath(g.path, gearFill)
@@ -179,11 +196,11 @@ class ClockworkScene : Scene {
             c.restore()
         }
 
-        drawGauge(c, u, t, level)
+        drawGauge(c, u, t, dt, level)
         drawSteam(c, u, dt)
     }
 
-    private fun drawGauge(c: Canvas, u: Float, t: Float, level: Float) {
+    private fun drawGauge(c: Canvas, u: Float, t: Float, dt: Float, level: Float) {
         val r = gr
         // Steam pipe on top
         c.drawRect(gx - r * 0.09f, gy - r * 1.42f, gx + r * 0.09f, gy - r, pipe)
@@ -226,7 +243,9 @@ class ClockworkScene : Scene {
 
         // Needle with a little steam-pressure tremble (still at full)
         val jitter = sin(t * 31f) * 0.35f + sin(t * 17f) * 0.25f
-        val deg = 135f + level * 270f + jitter
+        // The needle swings up on a spring when powered, and leans with tilt
+        val sweep = needleSpring.step(level * 270f * env.power + env.tiltX * 8f, dt).coerceIn(-6f, 279f)
+        val deg = 135f + sweep + jitter
         c.save()
         c.rotate(deg, gx, gy)
         needlePath.rewind()

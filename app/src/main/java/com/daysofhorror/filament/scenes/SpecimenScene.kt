@@ -9,17 +9,20 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import com.daysofhorror.filament.Glow
 import com.daysofhorror.filament.Scene
+import com.daysofhorror.filament.Spring
 import com.daysofhorror.filament.TAU
 import com.daysofhorror.filament.clamp01
 import com.daysofhorror.filament.col
 import com.daysofhorror.filament.lerp
 import com.daysofhorror.filament.withAlpha
+import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.min
 import kotlin.math.sin
 import kotlin.random.Random
 
 /** A sealed containment vial in a dark lab. It fills with glowing viral culture as you charge. */
-class SpecimenScene : Scene {
+class SpecimenScene : Scene() {
     private var lw = -1f
     private var lh = -1f
     private val bg = Paint()
@@ -83,6 +86,9 @@ class SpecimenScene : Scene {
     private val virions = ArrayList<Virion>()
     private val bubbles = ArrayList<Bub>()
     private val rnd = Random(66)
+    private val slosh = Spring(22f, 2.2f)
+    private val rings = ArrayList<FloatArray>() // x, y, age
+    private var burst = 0
 
     private fun setup(w: Float, h: Float) {
         lw = w; lh = h
@@ -141,7 +147,7 @@ class SpecimenScene : Scene {
         while (gy < h) { c.drawRect(0f, gy, w, gy + 1f, grid); gy += gs }
 
         // Containment glow grows with the culture
-        Glow.draw(c, col(0xFF6CFF3A), cx, lerp(vy1, vy0, level * 0.6f), w * (0.45f + 0.25f * level), 0.18f + 0.42f * level)
+        Glow.draw(c, col(0xFF6CFF3A), cx, lerp(vy1, vy0, level * 0.6f), w * (0.45f + 0.25f * level), (0.18f + 0.42f * level) * env.power)
 
         c.drawPath(tubePath, tube.apply { strokeWidth = 14f * u })
 
@@ -153,6 +159,22 @@ class SpecimenScene : Scene {
         val top = vy0 + inset
         val bot = vy1 - inset
         val surf = lerp(bot, top - 6f * u, level)
+        val tilt = slosh.step(env.tiltX.coerceIn(-1f, 1f) * 0.35f, dt)
+        val chop = min(1f, abs(slosh.v) * 2.5f)
+        fun surfAt(x: Float) = surf - tilt * (x - cx)
+        val inside = env.touching && env.touchX > vx0 && env.touchX < vx1 && env.touchY > vy0 && env.touchY < vy1
+        for (tap in env.taps) {
+            if (tap[0] > vx0 && tap[0] < vx1 && tap[1] > vy0 && tap[1] < vy1) {
+                rings.add(floatArrayOf(tap[0], tap[1], 0f))
+                // A burst of bubbles from where you tapped
+                for (k in 0 until 8) {
+                    val b = bubbles[(burst + k) % bubbles.size]
+                    b.x = ((tap[0] - vx0 - 10f * u) / (vx1 - vx0 - 20f * u)).coerceIn(0f, 1f)
+                    b.y = tap[1] + rnd.nextFloat() * 24f * u
+                }
+                burst += 8
+            }
+        }
         c.save()
         c.clipPath(vialPath)
         if (level > 0.003f) {
@@ -162,7 +184,7 @@ class SpecimenScene : Scene {
             val step = 4f * u
             while (x <= vx1 + step) {
                 val k = (x - vx0) / (vx1 - vx0)
-                fluidPath.lineTo(x, surf + sin(k * 9f + t * 2.4f) * 2.6f * u + sin(k * 17f - t * 3.7f) * 1.2f * u)
+                fluidPath.lineTo(x, surfAt(x) + sin(k * 9f + t * 2.4f) * (2.6f + 6f * chop) * u + sin(k * 17f - t * 3.7f) * 1.2f * u)
                 x += step
             }
             fluidPath.lineTo(vx1 + step, vy1 + 10f)
@@ -172,9 +194,8 @@ class SpecimenScene : Scene {
             // Bubbles
             for (b in bubbles) {
                 b.y -= b.speed * dt
-                if (b.y < surf + b.r) { b.y = bot - rnd.nextFloat() * 20f * u; b.x = rnd.nextFloat() }
-                if (b.y < surf) continue
                 val bx = lerp(vx0 + 10f * u, vx1 - 10f * u, b.x) + sin(t * 3f + b.r) * 2f * u
+                if (b.y < surfAt(bx) + b.r) { b.y = bot - rnd.nextFloat() * 20f * u; b.x = rnd.nextFloat(); continue }
                 bubble.strokeWidth = 1f * u
                 bubble.color = withAlpha(col(0xFFE6FFD0), 150)
                 c.drawCircle(bx, b.y, b.r, bubble)
@@ -185,7 +206,16 @@ class SpecimenScene : Scene {
             for ((idx, v) in virions.withIndex()) {
                 if (idx >= shownCount) break
                 v.y -= v.speed * dt
-                if (v.y < surf + v.size * 2f || v.y > bot) {
+                v.x = (v.x + env.tiltX * 0.25f * dt).coerceIn(0f, 1f)
+                if (inside) {
+                    // Press and hold: the virus swarms towards your finger
+                    val tf = ((env.touchX - vx0 - 18f * u) / (vx1 - vx0 - 36f * u)).coerceIn(0f, 1f)
+                    val ty = maxOf(env.touchY, surfAt(env.touchX) + v.size * 3f)
+                    val k = min(1f, dt * (2f + (idx % 5) * 0.6f))
+                    v.x += (tf - v.x) * k
+                    v.y += (ty + sin(t * 3f + v.phase) * 12f * u - v.y) * k
+                }
+                if (v.y < surfAt(lerp(vx0, vx1, v.x)) + v.size * 2f || v.y > bot) {
                     v.y = bot - rnd.nextFloat() * (bot - surf) * 0.5f
                     v.x = rnd.nextFloat()
                 }
@@ -198,10 +228,23 @@ class SpecimenScene : Scene {
 
             // Meniscus line glowing on top
             surfaceP.strokeWidth = 2f * u
-            c.drawLine(vx0, surf, vx1, surf, surfaceP)
+            c.drawLine(vx0, surfAt(vx0), vx1, surfAt(vx1), surfaceP)
             Glow.draw(c, col(0xFFCBFF9A), cx, surf, (vx1 - vx0) * 0.6f, 0.35f)
+            if (inside) Glow.draw(c, col(0xFFB6FF6E), env.touchX, env.touchY, 60f * u, 0.5f)
         }
         c.restore()
+
+        // Tap rings on the glass
+        val rit = rings.iterator()
+        while (rit.hasNext()) {
+            val rg = rit.next()
+            rg[2] += dt
+            if (rg[2] > 0.8f) { rit.remove(); continue }
+            val a = 1f - rg[2] / 0.8f
+            bubble.strokeWidth = 2f * u
+            bubble.color = withAlpha(col(0xFFE6FFD0), (200 * a).toInt())
+            c.drawCircle(rg[0], rg[1], 8f * u + rg[2] * 70f * u, bubble)
+        }
 
         // Glass front: edge + reflections
         glassEdge.strokeWidth = 2.5f * u
@@ -267,10 +310,12 @@ class SpecimenScene : Scene {
         }
         if (isTop) {
             // Status lamp: blinking red while charging
-            val on = 0.5f + 0.5f * sin(t * 4f)
+            val on = (0.5f + 0.5f * sin(t * 4f)) * env.power
             val lx = (vx0 + vx1) / 2f
             Glow.draw(c, col(0xFFFF3022), lx, y0 - 4f * u, 26f * u, 0.3f + 0.6f * on)
+            hazardRed.alpha = (90 + 165 * env.power).toInt()
             c.drawCircle(lx, y0 - 4f * u, 4f * u, hazardRed)
+            hazardRed.alpha = 255
         }
     }
 

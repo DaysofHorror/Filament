@@ -9,6 +9,8 @@ import com.daysofhorror.filament.Glow
 import com.daysofhorror.filament.Scene
 import com.daysofhorror.filament.TAU
 import com.daysofhorror.filament.col
+import kotlin.math.exp
+import kotlin.math.sqrt
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -17,7 +19,7 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /** A dark pine wood. One firefly wakes up for every 1% of charge. */
-class FirefliesScene : Scene {
+class FirefliesScene : Scene() {
     private val n = 100
     private val bx = FloatArray(n)
     private val by = FloatArray(n)
@@ -28,6 +30,11 @@ class FirefliesScene : Scene {
     private val ph = FloatArray(n)
     private val bf = FloatArray(n)
     private val alpha = FloatArray(n)
+    private val ox = FloatArray(n)
+    private val oy = FloatArray(n)
+    private val vx = FloatArray(n)
+    private val vy = FloatArray(n)
+    private val flare = FloatArray(n)
 
     private var lw = -1f
     private var lh = -1f
@@ -115,9 +122,32 @@ class FirefliesScene : Scene {
             alpha[i] += (target - alpha[i]) * fade
             if (dt == 0f && alpha[i] < 0.01f && target > 0f) alpha[i] = target // first frame / frozen
             if (alpha[i] < 0.01f) continue
-            val x = (bx[i] + ax[i] * sin(t * fx[i] + ph[i]) + 0.025f * sin(t * fx[i] * 2.7f + ph[i] * 3f)) * w
-            val y = (by[i] + ay[i] * sin(t * fy[i] + ph[i] * 1.7f)) * h
-            val pulse = 0.3f + 0.7f * max(0f, sin(t * bf[i] + ph[i])).pow(3)
+            val x0 = (bx[i] + ax[i] * sin(t * fx[i] + ph[i]) + 0.025f * sin(t * fx[i] * 2.7f + ph[i] * 3f)) * w
+            val y0 = (by[i] + ay[i] * sin(t * fy[i] + ph[i] * 1.7f)) * h
+            // Tilt: drift towards the low side. Taps: scatter away and flare up.
+            for (tap in env.taps) {
+                val dx = x0 + ox[i] - tap[0]
+                val dy = y0 + oy[i] - tap[1]
+                val d = sqrt(dx * dx + dy * dy)
+                val rr = 170f * u
+                if (d < rr) {
+                    val k = (1f - d / rr) * 900f * u / max(d, 1f)
+                    vx[i] += dx * k
+                    vy[i] += dy * k
+                    flare[i] = 1f
+                }
+            }
+            val tx = env.tiltX * 0.22f * w
+            vx[i] += ((tx - ox[i]) * 1.3f) * dt
+            vy[i] += ((0f - oy[i]) * 1.3f) * dt
+            val damp = exp(-1.8f * dt)
+            vx[i] *= damp; vy[i] *= damp
+            ox[i] += vx[i] * dt
+            oy[i] += vy[i] * dt
+            flare[i] = max(0f, flare[i] - dt * 0.9f)
+            val x = x0 + ox[i]
+            val y = y0 + oy[i]
+            val pulse = max(flare[i], 0.3f + 0.7f * max(0f, sin(t * bf[i] + ph[i])).pow(3))
             Glow.draw(c, col(0xFFC8FF6A), x, y, 34f * u * (0.6f + 0.4f * pulse), alpha[i] * pulse)
             Glow.draw(c, col(0xFFF6FFD8), x, y, 7f * u, alpha[i] * (0.5f + 0.5f * pulse))
         }

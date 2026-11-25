@@ -16,6 +16,13 @@ object Prefs {
     fun sceneId(c: Context): String = sp(c).getString("scene", "tide") ?: "tide"
     fun setScene(c: Context, id: String) = sp(c).edit().putString("scene", id).apply()
 
+    fun haptics(c: Context) = sp(c).getBoolean("haptics", true)
+    fun setHaptics(c: Context, v: Boolean) = sp(c).edit().putBoolean("haptics", v).apply()
+
+    /** How long the animation keeps the screen on while charging. 0 = the whole charge. */
+    fun screenMinutes(c: Context) = sp(c).getInt("screenMinutes", 10)
+    fun setScreenMinutes(c: Context, v: Int) = sp(c).edit().putInt("screenMinutes", v).apply()
+
     fun shuffle(c: Context) = sp(c).getBoolean("shuffle", false)
     fun setShuffle(c: Context, v: Boolean) = sp(c).edit().putBoolean("shuffle", v).apply()
 
