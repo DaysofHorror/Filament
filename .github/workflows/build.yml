@@ -5,12 +5,15 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
@@ -19,7 +22,16 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk Filament.apk
       - uses: actions/upload-artifact@v4
         with:
           name: Filament-apk
           path: app/build/outputs/apk/debug/*.apk
+      - name: Publish as the latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Filament (latest build)
+          body: Install Filament.apk on your phone.
+          files: Filament.apk
+          make_latest: true
