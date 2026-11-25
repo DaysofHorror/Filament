@@ -6,12 +6,17 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.graphics.PixelFormat
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
 
 /**
  * Android no longer lets apps hear "charger connected" unless they're running,
@@ -21,6 +26,8 @@ import android.provider.Settings
 class ChargeService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
+    private var overlay: View? = null
+    private val removeOverlayTask = Runnable { removeOverlay() }
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -31,6 +38,7 @@ class ChargeService : Service() {
                 }
                 Intent.ACTION_POWER_DISCONNECTED -> {
                     handler.removeCallbacksAndMessages(null)
+                    removeOverlay()
                     Notifs.cancelAlert(this@ChargeService)
                 }
             }
@@ -61,6 +69,7 @@ class ChargeService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        removeOverlay()
         try { unregisterReceiver(receiver) } catch (_: Exception) {}
         super.onDestroy()
     }
@@ -74,14 +83,47 @@ class ChargeService : Service() {
         val i = Intent(this, ChargeActivity::class.java).addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_USER_ACTION
         )
-        if (Settings.canDrawOverlays(this)) {
-            try {
-                startActivity(i)
-                return
-            } catch (_: Exception) {
-            }
+        // Android 15+ only lets an overlay app open a screen from the background while one of
+        // its overlay windows is actually showing, so put up an invisible 1px one first.
+        if (Settings.canDrawOverlays(this)) addOverlay()
+        try {
+            startActivity(i)
+        } catch (_: Exception) {
         }
-        Notifs.alert(this, i)
+        handler.removeCallbacks(removeOverlayTask)
+        handler.postDelayed(removeOverlayTask, 4000)
+        // Backup: if the screen still hasn't opened, use a full-screen notification.
+        handler.postDelayed({
+            if (SystemClock.elapsedRealtime() - ChargeActivity.lastShown > 6000) Notifs.alert(this, i)
+        }, 1800)
+    }
+
+    private fun addOverlay() {
+        if (overlay != null) return
+        try {
+            val v = View(this)
+            val lp = WindowManager.LayoutParams(
+                1, 1,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+            ).apply { gravity = Gravity.TOP or Gravity.START }
+            getSystemService(WindowManager::class.java).addView(v, lp)
+            overlay = v
+        } catch (_: Exception) {
+            overlay = null
+        }
+    }
+
+    private fun removeOverlay() {
+        val v = overlay ?: return
+        overlay = null
+        try {
+            getSystemService(WindowManager::class.java).removeView(v)
+        } catch (_: Exception) {
+        }
     }
 
     companion object {

@@ -77,6 +77,7 @@ class ChargeActivity : Activity() {
         }
 
         Notifs.cancelAlert(this)
+        if (!demo) lastShown = SystemClock.elapsedRealtime()
         if (demo) startDemo()
     }
 
@@ -95,6 +96,12 @@ class ChargeActivity : Activity() {
                 or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                 or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION)
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        lastShown = SystemClock.elapsedRealtime()
+        Notifs.cancelAlert(this)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -230,6 +237,10 @@ class ChargeActivity : Activity() {
     companion object {
         const val EXTRA_DEMO = "demo"
         const val EXTRA_SCENE = "scene"
+
+        /** When the charging screen last opened, so the service knows whether its backup is needed. */
+        @Volatile
+        var lastShown = 0L
     }
 }
 

@@ -2,6 +2,7 @@ package com.daysofhorror.filament
 
 import android.Manifest
 import android.app.Activity
+import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
@@ -233,6 +234,21 @@ class MainActivity : Activity() {
                 startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             }
         })
+        if (Build.VERSION.SDK_INT >= 34) {
+            setupBox.addView(divider())
+            val fsiOk = getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
+            setupBox.addView(setupRow(
+                "Full-screen alerts",
+                "Backup that opens the animation straight over the lock screen.",
+                fsiOk, "Allow"
+            ) {
+                try {
+                    startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:$packageName")))
+                } catch (_: Exception) {
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+                }
+            })
+        }
         if (Build.VERSION.SDK_INT >= 33) {
             setupBox.addView(divider())
             val notifOk = checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
