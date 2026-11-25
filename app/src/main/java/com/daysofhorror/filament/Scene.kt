@@ -6,6 +6,7 @@ import com.daysofhorror.filament.scenes.BloomScene
 import com.daysofhorror.filament.scenes.ClockworkScene
 import com.daysofhorror.filament.scenes.ConstellationScene
 import com.daysofhorror.filament.scenes.FirefliesScene
+import com.daysofhorror.filament.scenes.SpecimenScene
 import com.daysofhorror.filament.scenes.TideScene
 
 /**
@@ -34,6 +35,7 @@ object Scenes {
         SceneInfo("clockwork", "Clockwork", "Victorian brass gauge and gears", col(0xFFE8B95A)) { ClockworkScene() },
         SceneInfo("constellation", "Constellation", "A new star for every 1%", col(0xFF9FD8FF)) { ConstellationScene() },
         SceneInfo("bloom", "Bloom", "A tree grows, then blossoms at full", col(0xFFFF9EC4)) { BloomScene() },
+        SceneInfo("specimen", "Specimen", "A sealed vial fills with live culture", col(0xFF8CFF4A)) { SpecimenScene() },
     )
 
     fun byId(id: String?): SceneInfo = all.firstOrNull { it.id == id } ?: all[0]
