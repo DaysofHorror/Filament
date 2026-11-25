@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Filament" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:colorAccent">#FFFFB547</item>
+        <item name="android:colorPrimary">#FF0B0F1A</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <style name="Theme.Filament.Charge">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowAnimationStyle">@android:style/Animation.Toast</item>
+    </style>
+</resources>
